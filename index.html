@@ -611,29 +611,31 @@ async function attachStream(stream) {
 }
 
 async function initCamera() {
-  // Mobile prioritized constraint strategy (falling back cleanly from environment to generic)
+  // 1. Primary target: Rear-facing camera with ideal resolution hints
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Front camera constraints rejected, dropping structural suggestions:', err);
+    console.warn('Back camera with resolution hints failed, dropping constraints:', err);
   }
 
+  // 2. Secondary fallback: Rear-facing camera without resolution constraints
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'user' },
+      video: { facingMode: 'environment' },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('User facing mode target failure, capturing default device node:', err);
+    console.warn('Back camera mode failed, falling back to any available hardware node:', err);
   }
 
+  // 3. Absolute fallback: Just grab whatever camera is available (front or back)
   try {
     const stream = await tryGetStream({ video: true, audio: false });
     await attachStream(stream);
