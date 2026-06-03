@@ -597,24 +597,37 @@ async function initAudio() {
     volume: -4          
   }).connect(filter);
 
-  // CHANGED: Use a relative path from the current location to find the file inside public or root
-  audioTrack = new Tone.Player({
-    url: "./sound1.mp3",
-    loop: true,
-    volume: -2,
-    autostart: false
-  }).connect(filter);
+  // CHANGED: Wrapped file check and creation to survive missing local asset file 404s cleanly.
+  try {
+    const checkResponse = await fetch("./sound1.mp3", { method: 'HEAD' });
+    if (checkResponse.ok) {
+      audioTrack = new Tone.Player({
+        url: "./sound1.mp3",
+        loop: true,
+        volume: -2,
+        autostart: false
+      }).connect(filter);
 
-  audioTrack.buffer.onload = () => {
-    console.log("Custom sound1 asset successfully loaded.");
-    if (currentSource === 'track' && isStarted) {
-      setStatus('active', 'Live (Sound 1 Loop)');
+      audioTrack.buffer.onload = () => {
+        console.log("Custom sound1 asset successfully loaded.");
+        if (currentSource === 'track' && isStarted) {
+          setStatus('active', 'Live (Sound 1 Loop)');
+        }
+      };
+    } else {
+      throw new Error("File missing on server");
     }
-  };
-  
-  audioTrack.buffer.onerror = () => {
-    console.warn("sound1.mp3 failed to load via standard path.");
-  };
+  } catch (e) {
+    console.warn("sound1.mp3 could not be served. Creating fallback synth architecture.");
+    // Elegant fallback: Create an alternate loop engine using an internal generator so it won't crash
+    audioTrack = new Tone.FatOscillator({
+      type: "sawtooth",
+      count: 3,
+      spread: 20,
+      frequency: 130.81,
+      volume: -6
+    }).connect(filter);
+  }
 
   player.start();
   setStatus('active', 'Live (Piano Key Drone)');
@@ -628,18 +641,21 @@ function switchAudioSource(source) {
   if (source === 'piano') {
     btnPiano.classList.add('selected');
     btnTrack.classList.remove('selected');
-    if (audioTrack) audioTrack.stop();
+    if (audioTrack && typeof audioTrack.stop === 'function') audioTrack.stop();
     player.start();
     setStatus('active', 'Live (Piano Key Drone)');
   } else {
     btnTrack.classList.add('selected');
     btnPiano.classList.remove('selected');
     player.stop();
-    if (audioTrack && audioTrack.loaded) {
+    
+    if (audioTrack) {
       audioTrack.start();
-      setStatus('active', 'Live (Sound 1 Loop)');
-    } else {
-      setStatus('active', 'Sound 1 loading or missing...');
+      if (audioTrack.buffer && !audioTrack.buffer.loaded) {
+        setStatus('active', 'Playing Fallback Engine (Missing sound1.mp3)');
+      } else {
+        setStatus('active', 'Live (Sound 1 Loop)');
+      }
     }
   }
 }
@@ -674,24 +690,13 @@ async function attachStream(stream) {
 async function initCamera() {
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera setup failed, trying fallback:', err);
-  }
-
-  try {
-    const stream = await tryGetStream({
-      video: { facingMode: 'environment' },
-      audio: false
-    });
-    await attachStream(stream);
-    return;
-  } catch (err) {
-    console.warn('Alternative back camera strategy rejected:', err);
+    console.warn('Front camera setup failed, trying fallback:', err);
   }
 
   try {
@@ -852,7 +857,6 @@ function setStatus(state, label) {
   statusPill.className = 'status-pill' + (state === 'active' ? ' active' : '');
 }
 
-// CHANGED: The camera initialization code is now completely decoupled from Tone's buffer state loop
 async function activate() {
   if (isStarted) return;
   isStarted = true;
@@ -862,14 +866,10 @@ async function activate() {
   setStatus('', 'Starting…');
 
   try {
-    // 1. Core audio activation
     await initAudio();
-    
-    // 2. Camera + MediaPipe engine startup (completely independent of file success)
     await initCamera();
     initMediaPipe();
 
-    // 3. Immediately bring down overlay so camera feed displays instantly
     startOverlay.classList.add('hidden');
     switchAudioSource('piano');
 
