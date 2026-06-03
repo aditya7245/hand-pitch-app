@@ -41,6 +41,7 @@
     overflow-x: hidden;
   }
 
+  /* ── Noise grain overlay ── */
   body::before {
     content: '';
     position: fixed;
@@ -50,6 +51,7 @@
     z-index: 1000;
   }
 
+  /* ── Header ── */
   header {
     display: flex;
     align-items: center;
@@ -109,6 +111,7 @@
     50% { opacity: 0.5; transform: scale(0.7); }
   }
 
+  /* ── Main layout ── */
   main {
     flex: 1;
     display: grid;
@@ -126,6 +129,7 @@
     }
   }
 
+  /* ── Camera area ── */
   .camera-wrap {
     position: relative;
     width: 100%;
@@ -155,6 +159,7 @@
     height: 100%;
   }
 
+  /* Start overlay */
   .start-overlay {
     position: absolute;
     inset: 0;
@@ -221,6 +226,7 @@
     box-shadow: 0 0 0 3px rgba(0,255,179,0.25);
   }
 
+  /* Pitch ruler overlay on camera */
   .ruler {
     position: absolute;
     right: 12px;
@@ -266,6 +272,7 @@
     transition: top 0.08s linear;
   }
 
+  /* ── Sidebar ── */
   .sidebar {
     display: flex;
     flex-direction: column;
@@ -292,6 +299,7 @@
     margin-bottom: 0.6rem;
   }
 
+  /* Pitch meter */
   .pitch-value {
     font-family: var(--font-display);
     font-size: 2.4rem;
@@ -311,6 +319,7 @@
     margin-top: 0.3rem;
   }
 
+  /* Visualizer bars */
   .viz {
     display: flex;
     align-items: flex-end;
@@ -328,6 +337,7 @@
     min-height: 2px;
   }
 
+  /* Landmark card */
   .coords {
     display: flex;
     flex-direction: column;
@@ -346,6 +356,7 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Instructions card */
   .instructions ol {
     list-style: none;
     display: flex;
@@ -379,6 +390,7 @@
     margin-top: 1px;
   }
 
+  /* Hand detection indicator */
   .hand-indicator {
     display: flex;
     align-items: center;
@@ -402,6 +414,7 @@
     box-shadow: 0 0 8px var(--accent);
   }
 
+  /* Loading spinner inside overlay */
   .spinner {
     display: none;
     width: 28px;
@@ -464,6 +477,7 @@
   </div>
 
   <div class="sidebar">
+
     <div class="card">
       <div class="card-label">Pitch Shift</div>
       <div class="pitch-value zero" id="pitchDisplay">+0</div>
@@ -494,17 +508,20 @@
       <div class="card-label">How to play</div>
       <ol>
         <li>Hit <strong>Activate</strong> to grant camera + audio access</li>
+        <li>Hold your hand open in front of the camera</li>
         <li>Raise your index finger to pitch up ↑</li>
         <li>Lower your index finger to pitch down ↓</li>
         <li>Range: −8 to +16 semitones (0 baseline at 1/3 low)</li>
       </ol>
     </div>
+
   </div>
 </main>
 
 <footer>HandPitch · MediaPipe Hands + Tone.js · Use headphones for best results</footer>
 
 <script>
+// ── Viz bars init ──────────────────────────────────────────
 const vizBarsContainer = document.getElementById('vizBars');
 const NUM_BARS = 16;
 const bars = [];
@@ -516,9 +533,10 @@ for (let i = 0; i < NUM_BARS; i++) {
   bars.push(b);
 }
 
+// ── State ──────────────────────────────────────────────────
 let isStarted = false;
 let pitchShift = null;
-let player = null;      
+let player = null;
 let handDetected = false;
 let animHandle = null;
 let hands = null;
@@ -526,6 +544,7 @@ let lastPitch = 0;
 let smoothY = 0.5;
 const SMOOTH = 0.12;
 
+// ── UI refs ───────────────────────────────────────────────
 const video          = document.getElementById('video');
 const canvas         = document.getElementById('canvas');
 const ctx            = canvas.getContext('2d');
@@ -542,15 +561,19 @@ const handDot        = document.getElementById('handDot');
 const handStatus     = document.getElementById('handStatus');
 const fingerMarker   = document.getElementById('fingerMarker');
 
+// ── Tone.js setup ─────────────────────────────────────────
 async function initAudio() {
   await Tone.start();
 
   pitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, delayTime: 0 }).toDestination();
+
+  // Create a low-pass filter to take away the harsh, synthetic "edge"
   const filter = new Tone.Filter(800, "lowpass").connect(pitchShift);
 
+  // A "triangle" wave mimics a hollow wood/string sound (like a sustained piano key)
   player = new Tone.Oscillator({
     type: "triangle",   
-    frequency: 261.63,   
+    frequency: 261.63,   // Middle C (C4) - the classic piano baseline node
     volume: -4          
   }).connect(filter);
 
@@ -558,6 +581,7 @@ async function initAudio() {
   setStatus('active', 'Live (Piano Key Drone)');
 }
 
+// ── Camera ────────────────────────────────────────────────
 async function tryGetStream(constraints) {
   return navigator.mediaDevices.getUserMedia(constraints);
 }
@@ -567,33 +591,51 @@ async function attachStream(stream) {
     video.srcObject.getTracks().forEach(t => t.stop());
   }
   
+  // Explicit inline mobile security constraints
   video.setAttribute('playsinline', 'true');
   video.setAttribute('webkit-playsinline', 'true');
   video.muted = true;
   video.srcObject = stream;
 
-  await new Promise((resolve) => {
+  await new Promise((resolve, reject) => {
     const onReady = () => { video.removeEventListener('canplay', onReady); resolve(); };
+    const onErr   = (e) => { video.removeEventListener('error',   onErr);   reject(e); };
     video.addEventListener('canplay', onReady, { once: true });
-    setTimeout(resolve, 3000); 
+    video.addEventListener('error',   onErr,   { once: true });
+    setTimeout(resolve, 3000); // Max wait for stream sync
   });
 
+  // Force play immediately to confirm token initialization 
   await video.play().catch((e) => console.log("Video playback delayed:", e));
   video.classList.add('visible');
 }
 
 async function initCamera() {
+  // 1. Primary target: Rear-facing camera with ideal resolution hints
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Front camera setup failed, trying fallback:', err);
+    console.warn('Back camera with resolution hints failed, dropping constraints:', err);
   }
 
+  // 2. Secondary fallback: Rear-facing camera without resolution constraints
+  try {
+    const stream = await tryGetStream({
+      video: { facingMode: 'environment' },
+      audio: false
+    });
+    await attachStream(stream);
+    return;
+  } catch (err) {
+    console.warn('Back camera mode failed, falling back to any available hardware node:', err);
+  }
+
+  // 3. Absolute fallback: Just grab whatever camera is available (front or back)
   try {
     const stream = await tryGetStream({ video: true, audio: false });
     await attachStream(stream);
@@ -602,6 +644,7 @@ async function initCamera() {
   }
 }
 
+// ── MediaPipe Hands ───────────────────────────────────────
 function initMediaPipe() {
   hands = new Hands({
     locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
@@ -622,14 +665,16 @@ function startTrackingLoop() {
   async function loop() {
     if (!isStarted) return;
     
+    // Fallback safety to establish canvas baseline structural bounds when engine lags
     canvas.width  = video.videoWidth  || video.clientWidth  || 640;
     canvas.height = video.videoHeight || video.clientHeight || 480;
 
+    // Mobile check to prevent processing completely empty or black media frames
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
       try {
         await hands.send({ image: video });
       } catch (err) {
-        console.warn("Skipped frame:", err);
+        console.warn("Skipped frame calculation drop:", err);
       }
     }
 
@@ -650,35 +695,44 @@ function onResults(results) {
   handDetected = true;
   const lm = results.multiHandLandmarks[0];
 
+  // Draw skeleton
   drawHand(lm);
 
+  // Landmark 8 = index fingertip
   const tip = lm[8];
 
   coordX.textContent = tip.x.toFixed(3);
   coordY.textContent = tip.y.toFixed(3);
   coordZ.textContent = tip.z.toFixed(3);
 
+  // Smooth Y
   smoothY += (tip.y - smoothY) * SMOOTH;
 
+  // FIXED: Baseline (0 shift) rests at 1/3 from the bottom (y = 0.66)
   const baselineY = 0.66; 
   let targetPitch;
   
   if (smoothY <= baselineY) {
+    // Upper 2/3 of screen scales smoothly up to +16 semitones
     targetPitch = ((baselineY - smoothY) / baselineY) * 16;
   } else {
+    // Lower 1/3 of screen scales down to -8 semitones
     targetPitch = ((baselineY - smoothY) / (1 - baselineY)) * 8;
   }
   
   targetPitch = +(targetPitch).toFixed(1);
   setPitch(targetPitch);
 
+  // Ruler marker
   fingerMarker.style.top = `${smoothY * 100}%`;
+
   updateHandUI(true);
 }
 
 function setPitch(semitones) {
   if (!pitchShift) return;
   
+  // Clamping configurations matching the structural asymmetric limits
   const clamped = Math.max(-8, Math.min(16, semitones));
   pitchShift.pitch = clamped;
   lastPitch = clamped;
@@ -687,6 +741,7 @@ function setPitch(semitones) {
   pitchDisplay.textContent = (rounded >= 0 ? '+' : '') + rounded;
   pitchDisplay.className = 'pitch-value ' + (rounded > 0 ? '' : rounded < 0 ? 'negative' : 'zero');
 
+  // Normalized math for step scale tracking
   const norm = (clamped + 8) / 24; 
   
   bars.forEach((b, i) => {
@@ -695,6 +750,7 @@ function setPitch(semitones) {
     const h = Math.max(2, Math.round(Math.pow(dist, 2.5) * 48));
     const alpha = 0.2 + dist * 0.8;
     
+    // Continuous adaptive tracking gradient calculations
     const hue = clamped >= 0
       ? `hsl(${160 + (1 - (clamped / 16)) * 40}, 90%, 60%)`
       : `hsl(${340 - (Math.abs(clamped) / 8) * 40}, 85%, 60%)`;
@@ -710,6 +766,7 @@ function updateHandUI(detected) {
   handStatus.textContent = detected ? 'Hand detected' : 'No hand detected';
 }
 
+// ── Draw landmarks ────────────────────────────────────────
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -722,6 +779,7 @@ const CONNECTIONS = [
 function drawHand(lm) {
   const w = canvas.width, h = canvas.height;
 
+  // Connections
   ctx.strokeStyle = 'rgba(123,92,255,0.5)';
   ctx.lineWidth = 1.5;
   CONNECTIONS.forEach(([a, b]) => {
@@ -731,6 +789,7 @@ function drawHand(lm) {
     ctx.stroke();
   });
 
+  // Joints
   lm.forEach((p, i) => {
     const isIndex = i === 8;
     ctx.beginPath();
@@ -747,11 +806,13 @@ function drawHand(lm) {
   });
 }
 
+// ── Status ────────────────────────────────────────────────
 function setStatus(state, label) {
   statusText.textContent = label;
   statusPill.className = 'status-pill' + (state === 'active' ? ' active' : '');
 }
 
+// ── Start ─────────────────────────────────────────────────
 async function activate() {
   if (isStarted) return;
   isStarted = true;
@@ -766,7 +827,6 @@ async function activate() {
     initMediaPipe();
 
     startOverlay.classList.add('hidden');
-
   } catch (err) {
     console.error(err);
     isStarted = false;
@@ -777,6 +837,7 @@ async function activate() {
   }
 }
 
+// Bind both triggers explicitly ensuring compliance with cross-platform touch-action guidelines
 startBtn.addEventListener('click', activate);
 startBtn.addEventListener('touchstart', e => { 
   e.preventDefault(); 
