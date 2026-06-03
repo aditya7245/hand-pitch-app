@@ -140,7 +140,6 @@
     border: 1px solid var(--border);
   }
 
-  /* FIXED: Removed scaleX(-1) mirror transforms from video and canvas */
   #video {
     position: absolute;
     inset: 0;
@@ -454,11 +453,11 @@
     <canvas id="canvas"></canvas>
 
     <div class="ruler">
-      <div class="ruler-label">High</div>
+      <div class="ruler-label">High (+16)</div>
       <div class="ruler-track">
         <div id="fingerMarker"></div>
       </div>
-      <div class="ruler-label">Low</div>
+      <div class="ruler-label">Low (-8)</div>
     </div>
 
     <div class="start-overlay" id="startOverlay">
@@ -512,7 +511,7 @@
         <li>Hold your hand open in front of the camera</li>
         <li>Raise your index finger to pitch up ↑</li>
         <li>Lower your index finger to pitch down ↓</li>
-        <li>Range: −12 to +12 semitones</li>
+        <li>Range: −8 to +16 semitones (0 baseline at 1/3 low)</li>
       </ol>
     </div>
 
@@ -562,8 +561,6 @@ const handDot        = document.getElementById('handDot');
 const handStatus     = document.getElementById('handStatus');
 const fingerMarker   = document.getElementById('fingerMarker');
 
-// ── Tone.js setup ─────────────────────────────────────────
-// ── Tone.js setup ─────────────────────────────────────────
 // ── Tone.js setup ─────────────────────────────────────────
 async function initAudio() {
   await Tone.start();
@@ -653,6 +650,21 @@ function initMediaPipe() {
   startTrackingLoop();
 }
 
+function startTrackingLoop() {
+  async function loop() {
+    if (!isStarted) return;
+    canvas.width  = video.videoWidth  || canvas.offsetWidth;
+    canvas.height = video.videoHeight || canvas.offsetHeight;
+
+    try {
+      await hands.send({ image: video });
+    } catch (_) {}
+
+    animHandle = requestAnimationFrame(loop);
+  }
+  animHandle = requestAnimationFrame(loop);
+}
+
 function onResults(results) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -678,23 +690,20 @@ function onResults(results) {
   // Smooth Y
   smoothY += (tip.y - smoothY) * SMOOTH;
 
-  // ── UPDATED PITCH MAPPING ───────────────────────────────────────
-  // The baseline (0 shift) rests at 1/3 from the bottom (y = 0.66).
-  // This gives you up to +16 semitones going UP, and down to -8 semitones going DOWN.
+  // FIXED: Baseline (0 shift) rests at 1/3 from the bottom (y = 0.66)
   const baselineY = 0.66; 
   let targetPitch;
   
   if (smoothY <= baselineY) {
-    // Hand is in the upper 2/3 of the screen -> Scale up to +16 semitones
+    // Upper 2/3 of screen scales smoothly up to +16 semitones
     targetPitch = ((baselineY - smoothY) / baselineY) * 16;
   } else {
-    // Hand is in the lower 1/3 of the screen -> Scale down to -8 semitones
+    // Lower 1/3 of screen scales down to -8 semitones
     targetPitch = ((baselineY - smoothY) / (1 - baselineY)) * 8;
   }
   
   targetPitch = +(targetPitch).toFixed(1);
   setPitch(targetPitch);
-  // ────────────────────────────────────────────────────────────────
 
   // Ruler marker
   fingerMarker.style.top = `${smoothY * 100}%`;
@@ -704,7 +713,9 @@ function onResults(results) {
 
 function setPitch(semitones) {
   if (!pitchShift) return;
-  const clamped = Math.max(-12, Math.min(12, semitones));
+  
+  // FIXED: Expanded clamping limits to support the new asymmetrical pitch tracking range (-8 to +16)
+  const clamped = Math.max(-8, Math.min(16, semitones));
   pitchShift.pitch = clamped;
   lastPitch = clamped;
 
@@ -712,15 +723,21 @@ function setPitch(semitones) {
   pitchDisplay.textContent = (rounded >= 0 ? '+' : '') + rounded;
   pitchDisplay.className = 'pitch-value ' + (rounded > 0 ? '' : rounded < 0 ? 'negative' : 'zero');
 
-  const norm = (clamped + 12) / 24;
+  // FIXED: Normalized calculation adjusted from previous hardcoded 24-step layout
+  // Scale mapping maps minimum (-8) to 0, and maximum (+16) to 1.
+  const norm = (clamped + 8) / 24; 
+  
   bars.forEach((b, i) => {
     const barNorm = i / (NUM_BARS - 1);
     const dist = 1 - Math.abs(barNorm - norm);
     const h = Math.max(2, Math.round(Math.pow(dist, 2.5) * 48));
     const alpha = 0.2 + dist * 0.8;
-    const hue = norm > 0.5
-      ? `hsl(${160 + (1 - norm) * 40}, 90%, 60%)`
-      : `hsl(${340 - norm * 40}, 85%, 60%)`;
+    
+    // Smooth HSL color transition relative to the middle C tracking point 
+    const hue = clamped >= 0
+      ? `hsl(${160 + (1 - (clamped / 16)) * 40}, 90%, 60%)`
+      : `hsl(${340 - (Math.abs(clamped) / 8) * 40}, 85%, 60%)`;
+      
     b.style.height = h + 'px';
     b.style.background = hue;
     b.style.opacity = alpha;
@@ -750,7 +767,6 @@ function drawHand(lm) {
   ctx.lineWidth = 1.5;
   CONNECTIONS.forEach(([a, b]) => {
     ctx.beginPath();
-    // FIXED: Render natural coordinates to line up directly with the unmirrored back camera frame
     ctx.moveTo(lm[a].x * w, lm[a].y * h);
     ctx.lineTo(lm[b].x * w, lm[b].y * h);
     ctx.stroke();
