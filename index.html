@@ -704,6 +704,7 @@ async function attachStream(stream) {
   if (video.srcObject) {
     video.srcObject.getTracks().forEach(t => t.stop());
   }
+  
   video.setAttribute('playsinline', 'true');
   video.setAttribute('webkit-playsinline', 'true');
   video.muted = true;
@@ -720,22 +721,28 @@ async function attachStream(stream) {
 }
 
 async function initCamera() {
+  // First, explicitly attempt to grab the back/rear camera
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { 
+        facingMode: { ideal: 'environment' }, // Targets the back camera
+        width: { ideal: 640 }, 
+        height: { ideal: 480 } 
+      },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Front camera fail fallback:', err);
+    console.warn('Rear camera pipeline initialization failed, trying fallback:', err);
   }
 
+  // Fallback 1: Generic camera access if 'environment' is rejected
   try {
     const stream = await tryGetStream({ video: true, audio: false });
     await attachStream(stream);
   } catch (finalErr) {
-    throw new Error('Camera pipeline unreachable: ' + finalErr.message);
+    throw new Error('Camera hardware pipeline unreachable: ' + finalErr.message);
   }
 }
 
