@@ -590,46 +590,55 @@ async function attachStream(stream) {
   if (video.srcObject) {
     video.srcObject.getTracks().forEach(t => t.stop());
   }
+  
+  // Explicit inline mobile security constraints
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('webkit-playsinline', 'true');
+  video.muted = true;
   video.srcObject = stream;
+
   await new Promise((resolve, reject) => {
     const onReady = () => { video.removeEventListener('canplay', onReady); resolve(); };
     const onErr   = (e) => { video.removeEventListener('error',   onErr);   reject(e); };
     video.addEventListener('canplay', onReady, { once: true });
     video.addEventListener('error',   onErr,   { once: true });
-    setTimeout(resolve, 4000);
+    setTimeout(resolve, 3000); // Max wait for stream sync
   });
-  await video.play().catch(() => {});
+
+  // Force play immediately to confirm token initialization 
+  await video.play().catch((e) => console.log("Video playback delayed:", e));
   video.classList.add('visible');
 }
 
 async function initCamera() {
+  // Mobile prioritized constraint strategy (falling back cleanly from environment to generic)
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera (with resolution) failed, trying without hints:', err);
+    console.warn('Front camera constraints rejected, dropping structural suggestions:', err);
   }
 
   try {
     const stream = await tryGetStream({
-      video: { facingMode: 'environment' },
+      video: { facingMode: 'user' },
       audio: false
     });
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera (no hints) failed, falling back to any camera:', err);
+    console.warn('User facing mode target failure, capturing default device node:', err);
   }
 
   try {
     const stream = await tryGetStream({ video: true, audio: false });
     await attachStream(stream);
   } catch (finalErr) {
-    throw new Error('Camera initialization completely failed: ' + finalErr.message);
+    throw new Error('Camera hardware pipeline unreachable: ' + finalErr.message);
   }
 }
 
@@ -653,12 +662,19 @@ function initMediaPipe() {
 function startTrackingLoop() {
   async function loop() {
     if (!isStarted) return;
-    canvas.width  = video.videoWidth  || canvas.offsetWidth;
-    canvas.height = video.videoHeight || canvas.offsetHeight;
+    
+    // Fallback safety to establish canvas baseline structural bounds when engine lags
+    canvas.width  = video.videoWidth  || video.clientWidth  || 640;
+    canvas.height = video.videoHeight || video.clientHeight || 480;
 
-    try {
-      await hands.send({ image: video });
-    } catch (_) {}
+    // Mobile check to prevent processing completely empty or black media frames
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      try {
+        await hands.send({ image: video });
+      } catch (err) {
+        console.warn("Skipped frame calculation drop:", err);
+      }
+    }
 
     animHandle = requestAnimationFrame(loop);
   }
@@ -714,7 +730,7 @@ function onResults(results) {
 function setPitch(semitones) {
   if (!pitchShift) return;
   
-  // FIXED: Expanded clamping limits to support the new asymmetrical pitch tracking range (-8 to +16)
+  // Clamping configurations matching the structural asymmetric limits
   const clamped = Math.max(-8, Math.min(16, semitones));
   pitchShift.pitch = clamped;
   lastPitch = clamped;
@@ -723,8 +739,7 @@ function setPitch(semitones) {
   pitchDisplay.textContent = (rounded >= 0 ? '+' : '') + rounded;
   pitchDisplay.className = 'pitch-value ' + (rounded > 0 ? '' : rounded < 0 ? 'negative' : 'zero');
 
-  // FIXED: Normalized calculation adjusted from previous hardcoded 24-step layout
-  // Scale mapping maps minimum (-8) to 0, and maximum (+16) to 1.
+  // Normalized math for step scale tracking
   const norm = (clamped + 8) / 24; 
   
   bars.forEach((b, i) => {
@@ -733,7 +748,7 @@ function setPitch(semitones) {
     const h = Math.max(2, Math.round(Math.pow(dist, 2.5) * 48));
     const alpha = 0.2 + dist * 0.8;
     
-    // Smooth HSL color transition relative to the middle C tracking point 
+    // Continuous adaptive tracking gradient calculations
     const hue = clamped >= 0
       ? `hsl(${160 + (1 - (clamped / 16)) * 40}, 90%, 60%)`
       : `hsl(${340 - (Math.abs(clamped) / 8) * 40}, 85%, 60%)`;
@@ -820,8 +835,12 @@ async function activate() {
   }
 }
 
+// Bind both triggers explicitly ensuring compliance with cross-platform touch-action guidelines
 startBtn.addEventListener('click', activate);
-startBtn.addEventListener('touchstart', e => { e.preventDefault(); activate(); }, { passive: false });
+startBtn.addEventListener('touchstart', e => { 
+  e.preventDefault(); 
+  activate(); 
+}, { passive: false });
 </script>
 </body>
 </html>
