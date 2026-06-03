@@ -603,15 +603,66 @@ async function initAudio() {
 }
 
 // ── Camera ────────────────────────────────────────────────
-async function initCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-    audio: false
-  });
+// Three-tier fallback strategy for Android multi-lens compatibility:
+//   1. Back camera with ideal resolution  → best for most Android devices
+//   2. Back camera with no resolution hint → avoids multi-lens freeze on some OEMs
+//   3. Any camera, no constraints         → last resort (front cam on desktop, etc.)
+async function tryGetStream(constraints) {
+  return navigator.mediaDevices.getUserMedia(constraints);
+}
+
+async function attachStream(stream) {
+  // Stop any previous stream tracks to avoid ghost streams on retry
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+  }
   video.srcObject = stream;
-  await new Promise(res => video.onloadedmetadata = res);
-  video.play();
+  // On some Android browsers 'loadedmetadata' fires before srcObject is fully
+  // ready; waiting for 'canplay' is more reliable for back-camera streams.
+  await new Promise((resolve, reject) => {
+    const onReady = () => { video.removeEventListener('canplay', onReady); resolve(); };
+    const onErr   = (e) => { video.removeEventListener('error',   onErr);  reject(e); };
+    video.addEventListener('canplay', onReady, { once: true });
+    video.addEventListener('error',   onErr,   { once: true });
+    // Fallback: resolve after 4 s even if event never fires (seen on some OEMs)
+    setTimeout(resolve, 4000);
+  });
+  await video.play().catch(() => { /* autoplay already running — safe to ignore */ });
   video.classList.add('visible');
+}
+
+async function initCamera() {
+  // Tier 1 — back camera with resolution hints
+  try {
+    const stream = await tryGetStream({
+      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    await attachStream(stream);
+    return;
+  } catch (err) {
+    console.warn('Back camera (with resolution) failed, trying without hints:', err);
+  }
+
+  // Tier 2 — back camera, no resolution constraints (avoids multi-lens freeze)
+  try {
+    const stream = await tryGetStream({
+      video: { facingMode: 'environment' },
+      audio: false
+    });
+    await attachStream(stream);
+    return;
+  } catch (err) {
+    console.warn('Back camera (no hints) failed, falling back to any camera:', err);
+  }
+
+  // Tier 3 — any available camera (covers desktops and restrictive browsers)
+  try {
+    const stream = await tryGetStream({ video: true, audio: false });
+    await attachStream(stream);
+  } catch (finalErr) {
+    throw new Error('Camera initialization completely failed: ' + finalErr.message);
+  }
 }
 
 // ── MediaPipe Hands ───────────────────────────────────────
