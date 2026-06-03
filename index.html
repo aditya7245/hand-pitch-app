@@ -564,22 +564,24 @@ const fingerMarker   = document.getElementById('fingerMarker');
 
 // ── Tone.js setup ─────────────────────────────────────────
 // ── Tone.js setup ─────────────────────────────────────────
+// ── Tone.js setup ─────────────────────────────────────────
 async function initAudio() {
   await Tone.start();
 
-  // Create a pitch shifter to handle your hand movements
   pitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, delayTime: 0 }).toDestination();
 
-  // INSTEAD OF A PLAYER: Create a continuous Monotone Oscillator (Sine Wave)
-  player = new Tone.Oscillator({
-    type: "sine",       // Purest monotone sound with zero distracting harmonics
-    frequency: 220,     // A low-mid A note (220Hz) - smooth and easy on phone speakers
-    volume: -6          // Slightly lowered so it doesn't pierce your ears
-  }).connect(pitchShift);
+  // Create a low-pass filter to take away the harsh, synthetic "edge"
+  const filter = new Tone.Filter(800, "lowpass").connect(pitchShift);
 
-  // Start the continuous tone
+  // A "triangle" wave mimics a hollow wood/string sound (like a sustained piano key)
+  player = new Tone.Oscillator({
+    type: "triangle",   
+    frequency: 261.63,   // Middle C (C4) - the classic piano baseline node
+    volume: -4          
+  }).connect(filter);
+
   player.start();
-  setStatus('active', 'Live (Monotone Synth)');
+  setStatus('active', 'Live (Piano Key Drone)');
 }
 
 // ── Camera ────────────────────────────────────────────────
@@ -651,22 +653,6 @@ function initMediaPipe() {
   startTrackingLoop();
 }
 
-function startTrackingLoop() {
-  async function loop() {
-    if (!isStarted) return;
-    canvas.width  = video.videoWidth  || canvas.offsetWidth;
-    canvas.height = video.videoHeight || canvas.offsetHeight;
-
-    try {
-      await hands.send({ image: video });
-    } catch (_) {}
-
-    animHandle = requestAnimationFrame(loop);
-  }
-  animHandle = requestAnimationFrame(loop);
-}
-
-// ── Hand results ──────────────────────────────────────────
 function onResults(results) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -685,7 +671,6 @@ function onResults(results) {
   // Landmark 8 = index fingertip
   const tip = lm[8];
 
-  // FIXED: Using natural tracking values matching unmirrored back camera frame layout
   coordX.textContent = tip.x.toFixed(3);
   coordY.textContent = tip.y.toFixed(3);
   coordZ.textContent = tip.z.toFixed(3);
@@ -693,9 +678,23 @@ function onResults(results) {
   // Smooth Y
   smoothY += (tip.y - smoothY) * SMOOTH;
 
-  // Map Y → pitch: top (y≈0) → +12, bottom (y≈1) → −12
-  const targetPitch = +(((1 - smoothY) * 24) - 12).toFixed(1);
+  // ── UPDATED PITCH MAPPING ───────────────────────────────────────
+  // The baseline (0 shift) rests at 1/3 from the bottom (y = 0.66).
+  // This gives you up to +16 semitones going UP, and down to -8 semitones going DOWN.
+  const baselineY = 0.66; 
+  let targetPitch;
+  
+  if (smoothY <= baselineY) {
+    // Hand is in the upper 2/3 of the screen -> Scale up to +16 semitones
+    targetPitch = ((baselineY - smoothY) / baselineY) * 16;
+  } else {
+    // Hand is in the lower 1/3 of the screen -> Scale down to -8 semitones
+    targetPitch = ((baselineY - smoothY) / (1 - baselineY)) * 8;
+  }
+  
+  targetPitch = +(targetPitch).toFixed(1);
   setPitch(targetPitch);
+  // ────────────────────────────────────────────────────────────────
 
   // Ruler marker
   fingerMarker.style.top = `${smoothY * 100}%`;
