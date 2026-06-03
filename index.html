@@ -299,6 +299,37 @@
     margin-bottom: 0.6rem;
   }
 
+  /* Audio Selector Group */
+  .audio-selector {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 0.2rem;
+  }
+
+  .source-btn {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    padding: 0.6rem 0.4rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+  }
+
+  .source-btn.selected {
+    color: var(--bg);
+    background: var(--accent3);
+    border-color: var(--accent3);
+    box-shadow: 0 0 8px rgba(123,92,255,0.3);
+  }
+
   /* Pitch meter */
   .pitch-value {
     font-family: var(--font-display);
@@ -479,6 +510,14 @@
   <div class="sidebar">
 
     <div class="card">
+      <div class="card-label">Audio Engine Source</div>
+      <div class="audio-selector">
+        <button class="source-btn selected" id="btnPiano">Piano</button>
+        <button class="source-btn" id="btnTrack">Sound 1</button>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-label">Pitch Shift</div>
       <div class="pitch-value zero" id="pitchDisplay">+0</div>
       <div class="pitch-unit">semitones</div>
@@ -508,7 +547,7 @@
       <div class="card-label">How to play</div>
       <ol>
         <li>Hit <strong>Activate</strong> to grant camera + audio access</li>
-        <li>Hold your hand open in front of the camera</li>
+        <li>Choose <strong>Piano</strong> drone or your custom <strong>Sound 1</strong> loop</li>
         <li>Raise your index finger to pitch up ↑</li>
         <li>Lower your index finger to pitch down ↓</li>
         <li>Range: −8 to +16 semitones (0 baseline at 1/3 low)</li>
@@ -536,7 +575,9 @@ for (let i = 0; i < NUM_BARS; i++) {
 // ── State ──────────────────────────────────────────────────
 let isStarted = false;
 let pitchShift = null;
-let player = null;
+let player = null;      // Triangle wave engine
+let audioTrack = null;  // Loaded file engine (sound1.mp3)
+let currentSource = 'piano'; // 'piano' or 'track'
 let handDetected = false;
 let animHandle = null;
 let hands = null;
@@ -560,26 +601,70 @@ const coordZ         = document.getElementById('coordZ');
 const handDot        = document.getElementById('handDot');
 const handStatus     = document.getElementById('handStatus');
 const fingerMarker   = document.getElementById('fingerMarker');
+const btnPiano       = document.getElementById('btnPiano');
+const btnTrack       = document.getElementById('btnTrack');
 
 // ── Tone.js setup ─────────────────────────────────────────
 async function initAudio() {
   await Tone.start();
 
+  // Create global Pitch Shifter tied to main master output
   pitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, delayTime: 0 }).toDestination();
 
-  // Create a low-pass filter to take away the harsh, synthetic "edge"
+  // Create a low-pass filter to soften the synthetic edges
   const filter = new Tone.Filter(800, "lowpass").connect(pitchShift);
 
-  // A "triangle" wave mimics a hollow wood/string sound (like a sustained piano key)
+  // 1. Setup default Piano Wave Oscillator
   player = new Tone.Oscillator({
     type: "triangle",   
-    frequency: 261.63,   // Middle C (C4) - the classic piano baseline node
+    frequency: 261.63,   // Middle C (C4)
     volume: -4          
   }).connect(filter);
 
+  // 2. Setup External Audio File Player (Assumes sound1.mp3 is inside the repository root)
+  audioTrack = new Tone.Player({
+    url: "sound1.mp3",
+    loop: true,
+    volume: -2,
+    autostart: false
+  }).connect(filter);
+
+  // Fallback support if loading crashes due to file missing execution parameters
+  audioTrack.buffer.onload = () => console.log("Custom sound1 asset successfully loaded.");
+  audioTrack.buffer.onerror = () => console.warn("sound1.mp3 not found or failed to parse. Make sure it is saved in your Git folder.");
+
+  // Fire up the baseline tracker loop
   player.start();
   setStatus('active', 'Live (Piano Key Drone)');
 }
+
+// Switcher Action Controls
+function switchAudioSource(source) {
+  if (!isStarted || currentSource === source) return;
+  
+  currentSource = source;
+  
+  if (source === 'piano') {
+    btnPiano.classList.add('selected');
+    btnTrack.classList.remove('selected');
+    if (audioTrack && audioTrack.loaded) audioTrack.stop();
+    player.start();
+    setStatus('active', 'Live (Piano Key Drone)');
+  } else {
+    btnTrack.classList.add('selected');
+    btnPiano.classList.remove('selected');
+    player.stop();
+    if (audioTrack && audioTrack.loaded) {
+      audioTrack.start();
+      setStatus('active', 'Live (Sound 1 Loop)');
+    } else {
+      setStatus('active', 'Error: sound1.mp3 missing');
+    }
+  }
+}
+
+btnPiano.addEventListener('click', () => switchAudioSource('piano'));
+btnTrack.addEventListener('click', () => switchAudioSource('track'));
 
 // ── Camera ────────────────────────────────────────────────
 async function tryGetStream(constraints) {
@@ -591,7 +676,6 @@ async function attachStream(stream) {
     video.srcObject.getTracks().forEach(t => t.stop());
   }
   
-  // Explicit inline mobile security constraints
   video.setAttribute('playsinline', 'true');
   video.setAttribute('webkit-playsinline', 'true');
   video.muted = true;
@@ -602,16 +686,14 @@ async function attachStream(stream) {
     const onErr   = (e) => { video.removeEventListener('error',   onErr);   reject(e); };
     video.addEventListener('canplay', onReady, { once: true });
     video.addEventListener('error',   onErr,   { once: true });
-    setTimeout(resolve, 3000); // Max wait for stream sync
+    setTimeout(resolve, 3000); 
   });
 
-  // Force play immediately to confirm token initialization 
   await video.play().catch((e) => console.log("Video playback delayed:", e));
   video.classList.add('visible');
 }
 
 async function initCamera() {
-  // 1. Primary target: Rear-facing camera with ideal resolution hints
   try {
     const stream = await tryGetStream({
       video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
@@ -620,10 +702,9 @@ async function initCamera() {
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera with resolution hints failed, dropping constraints:', err);
+    console.warn('Back camera with resolution hints failed, trying alternative strategy:', err);
   }
 
-  // 2. Secondary fallback: Rear-facing camera without resolution constraints
   try {
     const stream = await tryGetStream({
       video: { facingMode: 'environment' },
@@ -632,10 +713,9 @@ async function initCamera() {
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera mode failed, falling back to any available hardware node:', err);
+    console.warn('Back camera modes rejected, capturing fallback device node:', err);
   }
 
-  // 3. Absolute fallback: Just grab whatever camera is available (front or back)
   try {
     const stream = await tryGetStream({ video: true, audio: false });
     await attachStream(stream);
@@ -665,11 +745,9 @@ function startTrackingLoop() {
   async function loop() {
     if (!isStarted) return;
     
-    // Fallback safety to establish canvas baseline structural bounds when engine lags
     canvas.width  = video.videoWidth  || video.clientWidth  || 640;
     canvas.height = video.videoHeight || video.clientHeight || 480;
 
-    // Mobile check to prevent processing completely empty or black media frames
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
       try {
         await hands.send({ image: video });
@@ -695,44 +773,35 @@ function onResults(results) {
   handDetected = true;
   const lm = results.multiHandLandmarks[0];
 
-  // Draw skeleton
   drawHand(lm);
 
-  // Landmark 8 = index fingertip
   const tip = lm[8];
 
   coordX.textContent = tip.x.toFixed(3);
   coordY.textContent = tip.y.toFixed(3);
   coordZ.textContent = tip.z.toFixed(3);
 
-  // Smooth Y
   smoothY += (tip.y - smoothY) * SMOOTH;
 
-  // FIXED: Baseline (0 shift) rests at 1/3 from the bottom (y = 0.66)
   const baselineY = 0.66; 
   let targetPitch;
   
   if (smoothY <= baselineY) {
-    // Upper 2/3 of screen scales smoothly up to +16 semitones
     targetPitch = ((baselineY - smoothY) / baselineY) * 16;
   } else {
-    // Lower 1/3 of screen scales down to -8 semitones
     targetPitch = ((baselineY - smoothY) / (1 - baselineY)) * 8;
   }
   
   targetPitch = +(targetPitch).toFixed(1);
   setPitch(targetPitch);
 
-  // Ruler marker
   fingerMarker.style.top = `${smoothY * 100}%`;
-
   updateHandUI(true);
 }
 
 function setPitch(semitones) {
   if (!pitchShift) return;
   
-  // Clamping configurations matching the structural asymmetric limits
   const clamped = Math.max(-8, Math.min(16, semitones));
   pitchShift.pitch = clamped;
   lastPitch = clamped;
@@ -741,7 +810,6 @@ function setPitch(semitones) {
   pitchDisplay.textContent = (rounded >= 0 ? '+' : '') + rounded;
   pitchDisplay.className = 'pitch-value ' + (rounded > 0 ? '' : rounded < 0 ? 'negative' : 'zero');
 
-  // Normalized math for step scale tracking
   const norm = (clamped + 8) / 24; 
   
   bars.forEach((b, i) => {
@@ -750,7 +818,6 @@ function setPitch(semitones) {
     const h = Math.max(2, Math.round(Math.pow(dist, 2.5) * 48));
     const alpha = 0.2 + dist * 0.8;
     
-    // Continuous adaptive tracking gradient calculations
     const hue = clamped >= 0
       ? `hsl(${160 + (1 - (clamped / 16)) * 40}, 90%, 60%)`
       : `hsl(${340 - (Math.abs(clamped) / 8) * 40}, 85%, 60%)`;
@@ -779,7 +846,6 @@ const CONNECTIONS = [
 function drawHand(lm) {
   const w = canvas.width, h = canvas.height;
 
-  // Connections
   ctx.strokeStyle = 'rgba(123,92,255,0.5)';
   ctx.lineWidth = 1.5;
   CONNECTIONS.forEach(([a, b]) => {
@@ -789,7 +855,6 @@ function drawHand(lm) {
     ctx.stroke();
   });
 
-  // Joints
   lm.forEach((p, i) => {
     const isIndex = i === 8;
     ctx.beginPath();
@@ -806,7 +871,6 @@ function drawHand(lm) {
   });
 }
 
-// ── Status ────────────────────────────────────────────────
 function setStatus(state, label) {
   statusText.textContent = label;
   statusPill.className = 'status-pill' + (state === 'active' ? ' active' : '');
@@ -826,7 +890,15 @@ async function activate() {
     await initCamera();
     initMediaPipe();
 
+    // Ensure the player finishes buffer assignment before hiding overlay
+    if (audioTrack && !audioTrack.loaded) {
+      setStatus('active', 'Loading Audio Custom Asset...');
+      await Tone.Buffer.loaded();
+    }
+
     startOverlay.classList.add('hidden');
+    // Set the initial visual state configuration safely
+    switchAudioSource('piano');
   } catch (err) {
     console.error(err);
     isStarted = false;
@@ -837,7 +909,6 @@ async function activate() {
   }
 }
 
-// Bind both triggers explicitly ensuring compliance with cross-platform touch-action guidelines
 startBtn.addEventListener('click', activate);
 startBtn.addEventListener('touchstart', e => { 
   e.preventDefault(); 
