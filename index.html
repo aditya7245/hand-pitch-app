@@ -140,14 +140,13 @@
     border: 1px solid var(--border);
   }
 
+  /* FIXED: Removed scaleX(-1) mirror transforms from video and canvas */
   #video {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transform: scaleX(-1);
-    -webkit-transform: scaleX(-1);
     opacity: 0;
     transition: opacity 0.6s ease;
   }
@@ -159,8 +158,6 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    transform: scaleX(-1);
-    -webkit-transform: scaleX(-1);
   }
 
   /* Start overlay */
@@ -695,7 +692,7 @@ function onResults(results) {
   // Landmark 8 = index fingertip
   const tip = lm[8];
 
-  // Match UI values perfectly with what is visible on-screen
+  // FIXED: Using natural tracking values matching unmirrored back camera frame layout
   coordX.textContent = tip.x.toFixed(3);
   coordY.textContent = tip.y.toFixed(3);
   coordZ.textContent = tip.z.toFixed(3);
@@ -761,9 +758,9 @@ function drawHand(lm) {
   ctx.lineWidth = 1.5;
   CONNECTIONS.forEach(([a, b]) => {
     ctx.beginPath();
-    // Invert the tracking X rendering to coordinate with CSS mirroring
-    ctx.moveTo((1 - lm[a].x) * w, lm[a].y * h);
-    ctx.lineTo((1 - lm[b].x) * w, lm[b].y * h);
+    // FIXED: Render natural coordinates to line up directly with the unmirrored back camera frame
+    ctx.moveTo(lm[a].x * w, lm[a].y * h);
+    ctx.lineTo(lm[b].x * w, lm[b].y * h);
     ctx.stroke();
   });
 
@@ -771,14 +768,14 @@ function drawHand(lm) {
   lm.forEach((p, i) => {
     const isIndex = i === 8;
     ctx.beginPath();
-    ctx.arc((1 - p.x) * w, p.y * h, isIndex ? 7 : 3.5, 0, Math.PI * 2);
+    ctx.arc(p.x * w, p.y * h, isIndex ? 7 : 3.5, 0, Math.PI * 2);
     ctx.fillStyle = isIndex ? 'rgba(0,255,179,0.9)' : 'rgba(200,180,255,0.6)';
     ctx.fill();
     if (isIndex) {
       ctx.strokeStyle = 'rgba(0,255,179,0.4)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc((1 - p.x) * w, p.y * h, 13, 0, Math.PI * 2);
+      ctx.arc(p.x * w, p.y * h, 13, 0, Math.PI * 2);
       ctx.stroke();
     }
   });
