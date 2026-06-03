@@ -886,19 +886,24 @@ async function activate() {
   setStatus('', 'Starting…');
 
   try {
+    // 1. Fire up the audio context engines
     await initAudio();
+    
+    // 2. Immediately spin up the camera stream so the UI stays responsive
     await initCamera();
     initMediaPipe();
 
-    // Ensure the player finishes buffer assignment before hiding overlay
-    if (audioTrack && !audioTrack.loaded) {
-      setStatus('active', 'Loading Audio Custom Asset...');
-      await Tone.Buffer.loaded();
-    }
-
+    // 3. Gracefully wait for Tone.js buffers without locking up the app
     startOverlay.classList.add('hidden');
-    // Set the initial visual state configuration safely
     switchAudioSource('piano');
+
+    // Asynchronously verify asset mapping on Vercel's edge network
+    Tone.Buffer.loaded().then(() => {
+      console.log("All custom audio buffers successfully cached.");
+    }).catch(e => {
+      console.warn("Buffer warning (Sound 1 will be unavailable until verified):", e);
+    });
+
   } catch (err) {
     console.error(err);
     isStarted = false;
