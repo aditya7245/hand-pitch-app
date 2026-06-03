@@ -41,7 +41,6 @@
     overflow-x: hidden;
   }
 
-  /* ── Noise grain overlay ── */
   body::before {
     content: '';
     position: fixed;
@@ -51,7 +50,6 @@
     z-index: 1000;
   }
 
-  /* ── Header ── */
   header {
     display: flex;
     align-items: center;
@@ -111,7 +109,6 @@
     50% { opacity: 0.5; transform: scale(0.7); }
   }
 
-  /* ── Main layout ── */
   main {
     flex: 1;
     display: grid;
@@ -129,7 +126,6 @@
     }
   }
 
-  /* ── Camera area ── */
   .camera-wrap {
     position: relative;
     width: 100%;
@@ -159,7 +155,6 @@
     height: 100%;
   }
 
-  /* Start overlay */
   .start-overlay {
     position: absolute;
     inset: 0;
@@ -226,7 +221,6 @@
     box-shadow: 0 0 0 3px rgba(0,255,179,0.25);
   }
 
-  /* Pitch ruler overlay on camera */
   .ruler {
     position: absolute;
     right: 12px;
@@ -272,7 +266,6 @@
     transition: top 0.08s linear;
   }
 
-  /* ── Sidebar ── */
   .sidebar {
     display: flex;
     flex-direction: column;
@@ -299,7 +292,6 @@
     margin-bottom: 0.6rem;
   }
 
-  /* Audio Selector Group */
   .audio-selector {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -330,7 +322,6 @@
     box-shadow: 0 0 8px rgba(123,92,255,0.3);
   }
 
-  /* Pitch meter */
   .pitch-value {
     font-family: var(--font-display);
     font-size: 2.4rem;
@@ -350,7 +341,6 @@
     margin-top: 0.3rem;
   }
 
-  /* Visualizer bars */
   .viz {
     display: flex;
     align-items: flex-end;
@@ -368,7 +358,6 @@
     min-height: 2px;
   }
 
-  /* Landmark card */
   .coords {
     display: flex;
     flex-direction: column;
@@ -387,7 +376,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Instructions card */
   .instructions ol {
     list-style: none;
     display: flex;
@@ -421,7 +409,6 @@
     margin-top: 1px;
   }
 
-  /* Hand detection indicator */
   .hand-indicator {
     display: flex;
     align-items: center;
@@ -445,7 +432,6 @@
     box-shadow: 0 0 8px var(--accent);
   }
 
-  /* Loading spinner inside overlay */
   .spinner {
     display: none;
     width: 28px;
@@ -508,7 +494,6 @@
   </div>
 
   <div class="sidebar">
-
     <div class="card">
       <div class="card-label">Audio Engine Source</div>
       <div class="audio-selector">
@@ -553,14 +538,12 @@
         <li>Range: −8 to +16 semitones (0 baseline at 1/3 low)</li>
       </ol>
     </div>
-
   </div>
 </main>
 
 <footer>HandPitch · MediaPipe Hands + Tone.js · Use headphones for best results</footer>
 
 <script>
-// ── Viz bars init ──────────────────────────────────────────
 const vizBarsContainer = document.getElementById('vizBars');
 const NUM_BARS = 16;
 const bars = [];
@@ -572,12 +555,11 @@ for (let i = 0; i < NUM_BARS; i++) {
   bars.push(b);
 }
 
-// ── State ──────────────────────────────────────────────────
 let isStarted = false;
 let pitchShift = null;
-let player = null;      // Triangle wave engine
-let audioTrack = null;  // Loaded file engine (sound1.mp3)
-let currentSource = 'piano'; // 'piano' or 'track'
+let player = null;      
+let audioTrack = null;  
+let currentSource = 'piano'; 
 let handDetected = false;
 let animHandle = null;
 let hands = null;
@@ -585,7 +567,6 @@ let lastPitch = 0;
 let smoothY = 0.5;
 const SMOOTH = 0.12;
 
-// ── UI refs ───────────────────────────────────────────────
 const video          = document.getElementById('video');
 const canvas         = document.getElementById('canvas');
 const ctx            = canvas.getContext('2d');
@@ -604,50 +585,50 @@ const fingerMarker   = document.getElementById('fingerMarker');
 const btnPiano       = document.getElementById('btnPiano');
 const btnTrack       = document.getElementById('btnTrack');
 
-// ── Tone.js setup ─────────────────────────────────────────
 async function initAudio() {
   await Tone.start();
 
-  // Create global Pitch Shifter tied to main master output
   pitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, delayTime: 0 }).toDestination();
-
-  // Create a low-pass filter to soften the synthetic edges
   const filter = new Tone.Filter(800, "lowpass").connect(pitchShift);
 
-  // 1. Setup default Piano Wave Oscillator
   player = new Tone.Oscillator({
     type: "triangle",   
-    frequency: 261.63,   // Middle C (C4)
+    frequency: 261.63,   
     volume: -4          
   }).connect(filter);
 
-  // 2. Setup External Audio File Player (Assumes sound1.mp3 is inside the repository root)
+  // CHANGED: Use a relative path from the current location to find the file inside public or root
   audioTrack = new Tone.Player({
-    url: "sound1.mp3",
+    url: "./sound1.mp3",
     loop: true,
     volume: -2,
     autostart: false
   }).connect(filter);
 
-  // Fallback support if loading crashes due to file missing execution parameters
-  audioTrack.buffer.onload = () => console.log("Custom sound1 asset successfully loaded.");
-  audioTrack.buffer.onerror = () => console.warn("sound1.mp3 not found or failed to parse. Make sure it is saved in your Git folder.");
+  audioTrack.buffer.onload = () => {
+    console.log("Custom sound1 asset successfully loaded.");
+    if (currentSource === 'track' && isStarted) {
+      setStatus('active', 'Live (Sound 1 Loop)');
+    }
+  };
+  
+  audioTrack.buffer.onerror = () => {
+    console.warn("sound1.mp3 failed to load via standard path.");
+  };
 
-  // Fire up the baseline tracker loop
   player.start();
   setStatus('active', 'Live (Piano Key Drone)');
 }
 
-// Switcher Action Controls
 function switchAudioSource(source) {
-  if (!isStarted || currentSource === source) return;
+  if (!isStarted) return;
   
   currentSource = source;
   
   if (source === 'piano') {
     btnPiano.classList.add('selected');
     btnTrack.classList.remove('selected');
-    if (audioTrack && audioTrack.loaded) audioTrack.stop();
+    if (audioTrack) audioTrack.stop();
     player.start();
     setStatus('active', 'Live (Piano Key Drone)');
   } else {
@@ -658,7 +639,7 @@ function switchAudioSource(source) {
       audioTrack.start();
       setStatus('active', 'Live (Sound 1 Loop)');
     } else {
-      setStatus('active', 'Error: sound1.mp3 missing');
+      setStatus('active', 'Sound 1 loading or missing...');
     }
   }
 }
@@ -666,7 +647,6 @@ function switchAudioSource(source) {
 btnPiano.addEventListener('click', () => switchAudioSource('piano'));
 btnTrack.addEventListener('click', () => switchAudioSource('track'));
 
-// ── Camera ────────────────────────────────────────────────
 async function tryGetStream(constraints) {
   return navigator.mediaDevices.getUserMedia(constraints);
 }
@@ -681,11 +661,9 @@ async function attachStream(stream) {
   video.muted = true;
   video.srcObject = stream;
 
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve) => {
     const onReady = () => { video.removeEventListener('canplay', onReady); resolve(); };
-    const onErr   = (e) => { video.removeEventListener('error',   onErr);   reject(e); };
     video.addEventListener('canplay', onReady, { once: true });
-    video.addEventListener('error',   onErr,   { once: true });
     setTimeout(resolve, 3000); 
   });
 
@@ -702,7 +680,7 @@ async function initCamera() {
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera with resolution hints failed, trying alternative strategy:', err);
+    console.warn('Back camera setup failed, trying fallback:', err);
   }
 
   try {
@@ -713,7 +691,7 @@ async function initCamera() {
     await attachStream(stream);
     return;
   } catch (err) {
-    console.warn('Back camera modes rejected, capturing fallback device node:', err);
+    console.warn('Alternative back camera strategy rejected:', err);
   }
 
   try {
@@ -724,7 +702,6 @@ async function initCamera() {
   }
 }
 
-// ── MediaPipe Hands ───────────────────────────────────────
 function initMediaPipe() {
   hands = new Hands({
     locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
@@ -752,7 +729,7 @@ function startTrackingLoop() {
       try {
         await hands.send({ image: video });
       } catch (err) {
-        console.warn("Skipped frame calculation drop:", err);
+        console.warn("Skipped frame:", err);
       }
     }
 
@@ -833,7 +810,6 @@ function updateHandUI(detected) {
   handStatus.textContent = detected ? 'Hand detected' : 'No hand detected';
 }
 
-// ── Draw landmarks ────────────────────────────────────────
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -876,7 +852,7 @@ function setStatus(state, label) {
   statusPill.className = 'status-pill' + (state === 'active' ? ' active' : '');
 }
 
-// ── Start ─────────────────────────────────────────────────
+// CHANGED: The camera initialization code is now completely decoupled from Tone's buffer state loop
 async function activate() {
   if (isStarted) return;
   isStarted = true;
@@ -886,23 +862,16 @@ async function activate() {
   setStatus('', 'Starting…');
 
   try {
-    // 1. Fire up the audio context engines
+    // 1. Core audio activation
     await initAudio();
     
-    // 2. Immediately spin up the camera stream so the UI stays responsive
+    // 2. Camera + MediaPipe engine startup (completely independent of file success)
     await initCamera();
     initMediaPipe();
 
-    // 3. Gracefully wait for Tone.js buffers without locking up the app
+    // 3. Immediately bring down overlay so camera feed displays instantly
     startOverlay.classList.add('hidden');
     switchAudioSource('piano');
-
-    // Asynchronously verify asset mapping on Vercel's edge network
-    Tone.Buffer.loaded().then(() => {
-      console.log("All custom audio buffers successfully cached.");
-    }).catch(e => {
-      console.warn("Buffer warning (Sound 1 will be unavailable until verified):", e);
-    });
 
   } catch (err) {
     console.error(err);
