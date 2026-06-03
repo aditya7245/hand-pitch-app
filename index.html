@@ -563,30 +563,23 @@ const handStatus     = document.getElementById('handStatus');
 const fingerMarker   = document.getElementById('fingerMarker');
 
 // ── Tone.js setup ─────────────────────────────────────────
+// ── Tone.js setup ─────────────────────────────────────────
 async function initAudio() {
   await Tone.start();
 
+  // Create a pitch shifter to handle your hand movements
   pitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, delayTime: 0 }).toDestination();
 
-  player = new Tone.Player({
-    url: 'https://upload.wikimedia.org/wikipedia/commons/a/a9/Tromboon-sample.ogg',
-    loop: true,
-    autostart: false,
-    onload: () => {
-      player.connect(pitchShift);
-      player.start();
-      setStatus('active', 'Live');
-    },
-    onerror: () => {
-      console.warn('Remote sample failed to load. Using synthesised fallback.');
-      const synth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'sine' },
-        envelope: { attack: 0.1, decay: 0.2, sustain: 1, release: 1 }
-      }).connect(pitchShift);
-      synth.triggerAttack(['C3', 'G3', 'C4']);
-      setStatus('active', 'Live (synth)');
-    }
-  });
+  // INSTEAD OF A PLAYER: Create a continuous Monotone Oscillator (Sine Wave)
+  player = new Tone.Oscillator({
+    type: "sine",       // Purest monotone sound with zero distracting harmonics
+    frequency: 220,     // A low-mid A note (220Hz) - smooth and easy on phone speakers
+    volume: -6          // Slightly lowered so it doesn't pierce your ears
+  }).connect(pitchShift);
+
+  // Start the continuous tone
+  player.start();
+  setStatus('active', 'Live (Monotone Synth)');
 }
 
 // ── Camera ────────────────────────────────────────────────
