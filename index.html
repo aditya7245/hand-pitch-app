@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HandPitch — Control Sound With Your Hand</title>
+
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+
+<!-- MediaPipe Hands -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<!-- Tone.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --accent: #00ffb3;
+    --accent2: #ff3c6e;
+    --accent3: #7b5cff;
+    --text: #e8e8f0;
+    --muted: #555570;
+    --font-display: 'Syne', sans-serif;
+    --font-mono: 'Space Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* ── Noise grain overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.2rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: var(--font-display);
+    font-size: clamp(1.2rem, 4vw, 1.6rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(90deg, var(--accent), var(--accent3));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.35rem 0.8rem;
+    transition: all 0.4s ease;
+  }
+
+  .status-pill.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 12px rgba(0,255,179,0.15);
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.4s ease;
+  }
+
+  .status-pill.active .status-dot {
+    background: var(--accent);
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.7); }
+  }
+
+  /* ── Main layout ── */
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    align-items: start;
+  }
+
+  @media (max-width: 700px) {
+    main {
+      grid-template-columns: 1fr;
+      padding: 0.75rem;
+      gap: 0.75rem;
+    }
+  }
+
+  /* ── Camera area ── */
+  .camera-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid var(--border);
+  }
+
+  #video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    opacity: 0;
+    transition: opacity 0.6s ease;
+  }
+
+  #video.visible { opacity: 1; }
+
+  #canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1);
+  }
+
+  /* Start overlay */
+  .start-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.2rem;
+    background: linear-gradient(160deg, #0d0d18 0%, #0a0a0f 100%);
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+    z-index: 10;
+  }
+
+  .start-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .start-icon {
+    width: 70px;
+    height: 70px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent3);
+    opacity: 0.6;
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .start-label {
+    font-family: var(--font-display);
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-align: center;
+    max-width: 180px;
+    line-height: 1.5;
+  }
+
+  #startBtn {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--bg);
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    padding: 0.85rem 2rem;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  #startBtn:active {
+    transform: scale(0.96);
+    box-shadow: 0 0 0 3px rgba(0,255,179,0.25);
+  }
+
+  /* Pitch ruler overlay on camera */
+  .ruler {
+    position: absolute;
+    right: 12px;
+    top: 0;
+    bottom: 0;
+    width: 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  .ruler-label {
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    writing-mode: vertical-rl;
+  }
+
+  .ruler-track {
+    flex: 1;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--accent2), var(--accent3), var(--accent));
+    border-radius: 2px;
+    margin: 6px 0;
+    opacity: 0.4;
+    position: relative;
+  }
+
+  #fingerMarker {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 0 8px rgba(255,255,255,0.7);
+    transition: top 0.08s linear;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 700px) {
+    .sidebar { flex-direction: row; flex-wrap: wrap; }
+    .sidebar > * { flex: 1 1 calc(50% - 0.375rem); }
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+  }
+
+  .card-label {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--muted);
+    margin-bottom: 0.6rem;
+  }
+
+  /* Pitch meter */
+  .pitch-value {
+    font-family: var(--font-display);
+    font-size: 2.4rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--accent);
+    transition: color 0.3s ease;
+    letter-spacing: -0.02em;
+  }
+
+  .pitch-value.negative { color: var(--accent2); }
+  .pitch-value.zero { color: var(--text); }
+
+  .pitch-unit {
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 0.3rem;
+  }
+
+  /* Visualizer bars */
+  .viz {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 50px;
+    margin-top: 0.5rem;
+  }
+
+  .viz-bar {
+    flex: 1;
+    border-radius: 2px 2px 0 0;
+    background: var(--accent3);
+    opacity: 0.3;
+    transition: height 0.1s ease, opacity 0.1s ease;
+    min-height: 2px;
+  }
+
+  /* Landmark card */
+  .coords {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .coord-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  .coord-val {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Instructions card */
+  .instructions ol {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    counter-reset: steps;
+  }
+
+  .instructions li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.68rem;
+    color: var(--muted);
+    line-height: 1.45;
+    counter-increment: steps;
+  }
+
+  .instructions li::before {
+    content: counter(steps);
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.55rem;
+    color: var(--accent3);
+    margin-top: 1px;
+  }
+
+  /* Hand detection indicator */
+  .hand-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 0.4rem;
+  }
+
+  .hand-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s, box-shadow 0.3s;
+    flex-shrink: 0;
+  }
+
+  .hand-dot.detected {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  /* Loading spinner inside overlay */
+  .spinner {
+    display: none;
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    padding: 0.75rem 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">HandPitch</div>
+  <div class="status-pill" id="statusPill">
+    <div class="status-dot"></div>
+    <span id="statusText">Offline</span>
+  </div>
+</header>
+
+<main>
+  <!-- Camera column -->
+  <div class="camera-wrap">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="canvas"></canvas>
+
+    <!-- Pitch ruler -->
+    <div class="ruler">
+      <div class="ruler-label">High</div>
+      <div class="ruler-track">
+        <div id="fingerMarker"></div>
+      </div>
+      <div class="ruler-label">Low</div>
+    </div>
+
+    <!-- Start overlay -->
+    <div class="start-overlay" id="startOverlay">
+      <div class="start-icon">
+        <svg width="70" height="70" viewBox="0 0 70 70" fill="none">
+          <circle cx="35" cy="35" r="34" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <path d="M28 26 C28 24 30 22 33 22 C33 22 33 28 33 30 L35 30 L35 22 C35 20 37 19 39 20 C41 21 41 23 41 25 L41 30 L42 30 C42 30 42 26 42 24 C42 22 44 21 45.5 22 C47 23 47 25 47 27 L47 38 C47 44 43 48 37 48 C31 48 26 44 26 38 L26 32 C26 29 27 26.5 28 26 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+          <line x1="33" y1="30" x2="33" y2="36" stroke="currentColor" stroke-width="1.2"/>
+          <line x1="37" y1="30" x2="37" y2="36" stroke="currentColor" stroke-width="1.2"/>
+          <line x1="41" y1="30" x2="41" y2="36" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+      </div>
+      <div class="start-label">Point your hand at the camera to control pitch</div>
+      <button id="startBtn">Activate</button>
+      <div class="spinner" id="loadingSpinner"></div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <!-- Pitch card -->
+    <div class="card">
+      <div class="card-label">Pitch Shift</div>
+      <div class="pitch-value zero" id="pitchDisplay">+0</div>
+      <div class="pitch-unit">semitones</div>
+      <div class="viz" id="vizBars"></div>
+      <div class="hand-indicator">
+        <div class="hand-dot" id="handDot"></div>
+        <span id="handStatus">No hand detected</span>
+      </div>
+    </div>
+
+    <!-- Coordinates card -->
+    <div class="card">
+      <div class="card-label">Index Fingertip (LM 8)</div>
+      <div class="coords">
+        <div class="coord-row">
+          <span>X</span><span class="coord-val" id="coordX">—</span>
+        </div>
+        <div class="coord-row">
+          <span>Y</span><span class="coord-val" id="coordY">—</span>
+        </div>
+        <div class="coord-row">
+          <span>Z</span><span class="coord-val" id="coordZ">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="card instructions">
+      <div class="card-label">How to play</div>
+      <ol>
+        <li>Hit <strong>Activate</strong> to grant camera + audio access</li>
+        <li>Hold your hand open in front of the camera</li>
+        <li>Raise your index finger to pitch up ↑</li>
+        <li>Lower your index finger to pitch down ↓</li>
+        <li>Range: −12 to +12 semitones</li>
+      </ol>
+    </div>
+
+  </div>
+</main>
+
+<footer>HandPitch · MediaPipe Hands + Tone.js · Use headphones for best results</footer>
+
+<script>
+// ── Viz bars init ──────────────────────────────────────────
+const vizBarsContainer = document.getElementById('vizBars');
+const NUM_BARS = 16;
+const bars = [];
+for (let i = 0; i < NUM_BARS; i++) {
+  const b = document.createElement('div');
+  b.className = 'viz-bar';
+  b.style.height = '2px';
+  vizBarsContainer.appendChild(b);
+  bars.push(b);
+}
+
+// ── State ──────────────────────────────────────────────────
+let isStarted = false;
+let pitchShift = null;
+let player = null;
+let handDetected = false;
+let animHandle = null;
+let hands = null;
+let lastPitch = 0;
+let smoothY = 0.5;
+const SMOOTH = 0.12;
+
+// ── UI refs ───────────────────────────────────────────────
+const video          = document.getElementById('video');
+const canvas         = document.getElementById('canvas');
+const ctx            = canvas.getContext('2d');
+const startBtn       = document.getElementById('startBtn');
+const startOverlay   = document.getElementById('startOverlay');
+const loadSpinner    = document.getElementById('loadingSpinner');
+const statusPill     = document.getElementById('statusPill');
+const statusText     = document.getElementById('statusText');
+const pitchDisplay   = document.getElementById('pitchDisplay');
+const coordX         = document.getElementById('coordX');
+const coordY         = document.getElementById('coordY');
+const coordZ         = document.getElementById('coordZ');
+const handDot        = document.getElementById('handDot');
+const handStatus     = document.getElementById('handStatus');
+const fingerMarker   = document.getElementById('fingerMarker');
+
+// ── Tone.js setup ─────────────────────────────────────────
+async function initAudio() {
+  await Tone.start();
+
+  pitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, delayTime: 0 }).toDestination();
+
+  // Free-to-use loopable sample (looperman-style OGG from Wikimedia)
+  player = new Tone.Player({
+    url: 'https://upload.wikimedia.org/wikipedia/commons/a/a9/Tromboon-sample.ogg',
+    loop: true,
+    autostart: false,
+    onload: () => {
+      player.connect(pitchShift);
+      player.start();
+      setStatus('active', 'Live');
+    },
+    onerror: () => {
+      // Fallback: synthesise a looping drone with Tone
+      console.warn('Remote sample failed to load. Using synthesised fallback.');
+      const synth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.1, decay: 0.2, sustain: 1, release: 1 }
+      }).connect(pitchShift);
+      synth.triggerAttack(['C3', 'G3', 'C4']);
+      setStatus('active', 'Live (synth)');
+    }
+  });
+}
+
+// ── Camera ────────────────────────────────────────────────
+async function initCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+    audio: false
+  });
+  video.srcObject = stream;
+  await new Promise(res => video.onloadedmetadata = res);
+  video.play();
+  video.classList.add('visible');
+}
+
+// ── MediaPipe Hands ───────────────────────────────────────
+function initMediaPipe() {
+  hands = new Hands({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+  });
+
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.6
+  });
+
+  hands.onResults(onResults);
+  startTrackingLoop();
+}
+
+function startTrackingLoop() {
+  async function loop() {
+    if (!isStarted) return;
+    canvas.width  = video.videoWidth  || canvas.offsetWidth;
+    canvas.height = video.videoHeight || canvas.offsetHeight;
+
+    try {
+      await hands.send({ image: video });
+    } catch (_) { /* safe to ignore */ }
+
+    animHandle = requestAnimationFrame(loop);
+  }
+  animHandle = requestAnimationFrame(loop);
+}
+
+// ── Hand results ──────────────────────────────────────────
+function onResults(results) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    handDetected = false;
+    updateHandUI(false);
+    return;
+  }
+
+  handDetected = true;
+  const lm = results.multiHandLandmarks[0];
+
+  // Draw skeleton
+  drawHand(lm);
+
+  // Landmark 8 = index fingertip
+  const tip = lm[8];
+
+  // Update coord display (MediaPipe coords are 0-1, mirrored X for display)
+  coordX.textContent = (1 - tip.x).toFixed(3);
+  coordY.textContent = tip.y.toFixed(3);
+  coordZ.textContent = tip.z.toFixed(3);
+
+  // Smooth Y
+  smoothY += (tip.y - smoothY) * SMOOTH;
+
+  // Map Y → pitch: top (y≈0) → +12, bottom (y≈1) → −12
+  const targetPitch = +(((1 - smoothY) * 24) - 12).toFixed(1);
+  setPitch(targetPitch);
+
+  // Ruler marker (y=0 top, y=1 bottom → marker top% matches)
+  fingerMarker.style.top = `${smoothY * 100}%`;
+
+  updateHandUI(true);
+}
+
+function setPitch(semitones) {
+  if (!pitchShift) return;
+  const clamped = Math.max(-12, Math.min(12, semitones));
+  pitchShift.pitch = clamped;
+  lastPitch = clamped;
+
+  // Display
+  const rounded = Math.round(clamped);
+  pitchDisplay.textContent = (rounded >= 0 ? '+' : '') + rounded;
+  pitchDisplay.className = 'pitch-value ' + (rounded > 0 ? '' : rounded < 0 ? 'negative' : 'zero');
+
+  // Viz bars
+  const norm = (clamped + 12) / 24; // 0–1
+  bars.forEach((b, i) => {
+    const barNorm = i / (NUM_BARS - 1);
+    const dist = 1 - Math.abs(barNorm - norm);
+    const h = Math.max(2, Math.round(Math.pow(dist, 2.5) * 48));
+    const alpha = 0.2 + dist * 0.8;
+    const hue = norm > 0.5
+      ? `hsl(${160 + (1 - norm) * 40}, 90%, 60%)`
+      : `hsl(${340 - norm * 40}, 85%, 60%)`;
+    b.style.height = h + 'px';
+    b.style.background = hue;
+    b.style.opacity = alpha;
+  });
+}
+
+function updateHandUI(detected) {
+  handDot.classList.toggle('detected', detected);
+  handStatus.textContent = detected ? 'Hand detected' : 'No hand detected';
+}
+
+// ── Draw landmarks ────────────────────────────────────────
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function drawHand(lm) {
+  const w = canvas.width, h = canvas.height;
+
+  // Connections
+  ctx.strokeStyle = 'rgba(123,92,255,0.5)';
+  ctx.lineWidth = 1.5;
+  CONNECTIONS.forEach(([a, b]) => {
+    ctx.beginPath();
+    ctx.moveTo(lm[a].x * w, lm[a].y * h);
+    ctx.lineTo(lm[b].x * w, lm[b].y * h);
+    ctx.stroke();
+  });
+
+  // Joints
+  lm.forEach((p, i) => {
+    const isIndex = i === 8;
+    ctx.beginPath();
+    ctx.arc(p.x * w, p.y * h, isIndex ? 7 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = isIndex ? 'rgba(0,255,179,0.9)' : 'rgba(200,180,255,0.6)';
+    ctx.fill();
+    if (isIndex) {
+      ctx.strokeStyle = 'rgba(0,255,179,0.4)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, 13, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+}
+
+// ── Status ────────────────────────────────────────────────
+function setStatus(state, label) {
+  statusText.textContent = label;
+  statusPill.className = 'status-pill' + (state === 'active' ? ' active' : '');
+}
+
+// ── Start ─────────────────────────────────────────────────
+async function activate() {
+  if (isStarted) return;
+  isStarted = true;
+
+  startBtn.style.display = 'none';
+  loadSpinner.style.display = 'block';
+  setStatus('', 'Starting…');
+
+  try {
+    await initAudio();
+    await initCamera();
+    initMediaPipe();
+
+    startOverlay.classList.add('hidden');
+  } catch (err) {
+    console.error(err);
+    isStarted = false;
+    startBtn.style.display = '';
+    loadSpinner.style.display = 'none';
+    setStatus('', 'Error — retry');
+    startBtn.textContent = 'Retry';
+  }
+}
+
+startBtn.addEventListener('click', activate);
+startBtn.addEventListener('touchstart', e => { e.preventDefault(); activate(); }, { passive: false });
+</script>
+</body>
+</html>
